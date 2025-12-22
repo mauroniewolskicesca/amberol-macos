@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - '**'
+      - '!master'
+      - '!main'
+  create:
+    branches:
+      - '**'
   workflow_dispatch:
     inputs:
       version:
@@ -28,7 +35,7 @@ jobs:
           pip3 install --break-system-packages pygobject
 
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Setup build directory
         run: |
@@ -75,8 +82,17 @@ jobs:
 
       - name: Create Info.plist
         run: |
-          VERSION="${{ github.event.inputs.version || github.ref_name }}"
-          VERSION="${VERSION#v}"  # Remove 'v' prefix if present
+          # Determine version name based on trigger type
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            BRANCH_NAME="${{ github.ref_name }}"
+            BRANCH_NAME="${BRANCH_NAME//\//-}"
+            VERSION="dev-${BRANCH_NAME}"
+          fi
           cat > Amberol.app/Contents/Info.plist << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -157,8 +173,19 @@ jobs:
 
       - name: Create DMG
         run: |
-          VERSION="${{ github.event.inputs.version || github.ref_name }}"
-          VERSION="${VERSION#v}"
+          # Determine version name based on trigger type
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # Branch build - use dev-branch-name format
+            BRANCH_NAME="${{ github.ref_name }}"
+            # Sanitize branch name (replace / with -)
+            BRANCH_NAME="${BRANCH_NAME//\//-}"
+            VERSION="dev-${BRANCH_NAME}"
+          fi
 
           # Create a temporary directory for DMG contents
           mkdir -p dmg_contents
