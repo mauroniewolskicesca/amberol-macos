@@ -23,7 +23,7 @@ mod imp {
         #[template_child]
         pub volume_scale: TemplateChild<gtk::Scale>,
         #[template_child]
-        pub volume_high_image: TemplateChild<gtk::Image>,
+        pub volume_high_button: TemplateChild<gtk::Button>,
 
         pub toggle_mute: Cell<bool>,
         pub prev_volume: Cell<f64>,
@@ -43,6 +43,9 @@ mod imp {
             klass.set_accessible_role(gtk::AccessibleRole::Group);
 
             klass.install_property_action("volume.toggle-mute", "toggle-mute");
+            klass.install_action("volume.max", None, |widget, _, _| {
+                widget.set_volume_max();
+            });
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -165,6 +168,7 @@ impl VolumeControl {
     }
 
     fn setup_controller(&self) {
+        // Scroll controller for mouse wheel
         let controller = gtk::EventControllerScroll::builder()
             .name("volume-scroll")
             .flags(gtk::EventControllerScrollFlags::VERTICAL)
@@ -182,6 +186,31 @@ impl VolumeControl {
             }
         ));
         self.imp().volume_scale.add_controller(controller);
+
+        // Click gesture for better macOS compatibility
+        // GTK4 Scales on macOS sometimes don't respond well to trough clicks
+        let click_controller = gtk::GestureClick::builder()
+            .name("volume-click")
+            .button(1) // Primary button
+            .build();
+        click_controller.connect_pressed(clone!(
+            #[strong(rename_to = this)]
+            self,
+            move |gesture, _, x, _y| {
+                let scale = &this.imp().volume_scale;
+                let width = scale.width() as f64;
+                if width > 0.0 {
+                    // Calculate the relative position (0.0 to 1.0)
+                    let ratio = (x / width).clamp(0.0, 1.0);
+                    let adj = scale.adjustment();
+                    let new_value = adj.lower() + ratio * (adj.upper() - adj.lower());
+                    debug!("Click at x={}, width={}, ratio={}, new_value={}", x, width, ratio, new_value);
+                    adj.set_value(new_value);
+                }
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+            }
+        ));
+        self.imp().volume_scale.add_controller(click_controller);
     }
 
     fn toggle_mute(&self, muted: bool) {
@@ -200,5 +229,15 @@ impl VolumeControl {
 
     pub fn volume(&self) -> f64 {
         self.imp().volume_scale.value()
+    }
+
+    fn set_volume_max(&self) {
+        // Unmute if muted
+        if self.imp().toggle_mute.get() {
+            self.imp().toggle_mute.set(false);
+            self.notify("toggle-mute");
+        }
+        // Set to max
+        self.imp().volume_scale.set_value(1.0);
     }
 }
