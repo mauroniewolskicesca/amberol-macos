@@ -23,7 +23,7 @@ mod imp {
         #[template_child]
         pub volume_scale: TemplateChild<gtk::Scale>,
         #[template_child]
-        pub volume_high_image: TemplateChild<gtk::Image>,
+        pub volume_high_button: TemplateChild<gtk::Button>,
 
         pub toggle_mute: Cell<bool>,
         pub prev_volume: Cell<f64>,
@@ -43,6 +43,9 @@ mod imp {
             klass.set_accessible_role(gtk::AccessibleRole::Group);
 
             klass.install_property_action("volume.toggle-mute", "toggle-mute");
+            klass.install_action("volume.max", None, |widget, _, _| {
+                widget.set_volume_max();
+            });
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -165,6 +168,7 @@ impl VolumeControl {
     }
 
     fn setup_controller(&self) {
+        // Scroll controller for mouse wheel
         let controller = gtk::EventControllerScroll::builder()
             .name("volume-scroll")
             .flags(gtk::EventControllerScrollFlags::VERTICAL)
@@ -182,6 +186,49 @@ impl VolumeControl {
             }
         ));
         self.imp().volume_scale.add_controller(controller);
+
+        let drag_controller = gtk::GestureDrag::builder()
+            .name("volume-drag")
+            .button(1)
+            .build();
+
+        drag_controller.connect_drag_begin(clone!(
+            #[strong(rename_to = this)]
+            self,
+            move |gesture, x, _y| {
+                let scale = &this.imp().volume_scale;
+                let width = scale.width() as f64;
+                if width > 0.0 {
+                    let ratio = (x / width).clamp(0.0, 1.0);
+                    let adj = scale.adjustment();
+                    let new_value = adj.lower() + ratio * (adj.upper() - adj.lower());
+                    adj.set_value(new_value);
+                }
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+            }
+        ));
+
+        drag_controller.connect_drag_update(clone!(
+            #[strong(rename_to = this)]
+            self,
+            move |gesture, offset_x, _offset_y| {
+                if let Some((start_x, _)) = gesture.start_point() {
+                    let scale = &this.imp().volume_scale;
+                    let width = scale.width() as f64;
+                    if width > 0.0 {
+                        let current_x = start_x + offset_x;
+                        let ratio = (current_x / width).clamp(0.0, 1.0);
+                        let adj = scale.adjustment();
+                        let new_value = adj.lower() + ratio * (adj.upper() - adj.lower());
+                        adj.set_value(new_value);
+                    }
+                }
+            }
+        ));
+
+        // Set propagation phase to capture to get events before the scale's internal handlers
+        drag_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        self.imp().volume_scale.add_controller(drag_controller);
     }
 
     fn toggle_mute(&self, muted: bool) {
@@ -200,5 +247,15 @@ impl VolumeControl {
 
     pub fn volume(&self) -> f64 {
         self.imp().volume_scale.value()
+    }
+
+    fn set_volume_max(&self) {
+        // Unmute if muted
+        if self.imp().toggle_mute.get() {
+            self.imp().toggle_mute.set(false);
+            self.notify("toggle-mute");
+        }
+        // Set to max
+        self.imp().volume_scale.set_value(1.0);
     }
 }
