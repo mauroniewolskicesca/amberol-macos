@@ -19,6 +19,14 @@
     <file alias="view-queue-rtl-symbolic.svg">assets/icons/view-queue-rtl-symbolic.svg</file>
     <file alias="view-queue-symbolic.svg">assets/icons/view-queue-symbolic.svg</file>
   </gresource>
+  <gresource prefix="/io/bassi/Amberol/icons/scalable/apps/">
+    <file alias="io.bassi.Amberol.svg">../data/icons/hicolor/scalable/apps/io.bassi.Amberol.svg</file>
+    <file alias="io.bassi.Amberol.Devel.svg">../data/icons/hicolor/scalable/apps/io.bassi.Amberol.Devel.svg</file>
+  </gresource>
+  <gresource prefix="/io/bassi/Amberol/icons/symbolic/apps/">
+    <file alias="io.bassi.Amberol-symbolic.svg">../data/icons/hicolor/symbolic/apps/io.bassi.Amberol-symbolic.svg</file>
+    <file alias="io.bassi.Amberol.Devel-symbolic.svg">../data/icons/hicolor/symbolic/apps/io.bassi.Amberol.Devel-symbolic.svg</file>
+  </gresource>
   <gresource prefix="/io/bassi/Amberol">
     <file alias="style.css">gtk/style.css</file>
     <!-- All UI files are generated in the builddir/src/gtk directory -->

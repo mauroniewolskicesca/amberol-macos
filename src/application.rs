@@ -10,7 +10,10 @@ use ashpd::{desktop::background::Background, WindowIdentifier};
 use async_channel::Receiver;
 use glib::clone;
 use gtk::{gio, glib, prelude::*};
-use log::{debug, warn};
+use log::debug;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use log::warn;
+
 
 use crate::{
     audio::AudioPlayer,
@@ -85,7 +88,29 @@ mod imp {
         fn startup(&self) {
             self.parent_startup();
 
+            // On macOS, the freedesktop icon theme system doesn't work reliably.
+            // We need to ensure icons are loaded from our GResource bundle.
+            // Add our resource path to the icon theme search path.
+            if let Some(display) = gtk::gdk::Display::default() {
+                let icon_theme = gtk::IconTheme::for_display(&display);
+                icon_theme.add_resource_path("/io/bassi/Amberol/icons");
+
+                // On macOS, also add the search path for hicolor icons installed via Homebrew
+                #[cfg(target_os = "macos")]
+                {
+                    // Try common macOS icon paths
+                    icon_theme.add_search_path("/usr/local/share/icons");
+                    icon_theme.add_search_path("/opt/homebrew/share/icons");
+                    if let Some(data_dir) = glib::user_data_dir().to_str() {
+                        icon_theme.add_search_path(&format!("{}/icons", data_dir));
+                    }
+                }
+            }
+
             gtk::Window::set_default_icon_name(APPLICATION_ID);
+
+            // Note: macOS Dock icon is set via the .app bundle's Info.plist and .icns file
+            // The cocoa crate approach was causing conflicts with GTK4
         }
 
         fn activate(&self) {
@@ -190,7 +215,7 @@ impl Application {
             window.upcast()
         };
 
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
         self.request_background();
 
         window.present();
@@ -284,6 +309,21 @@ impl Application {
         }
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    #[cfg(target_os = "macos")]
+    fn request_background(&self) {
+        // On macOS, we don't need to request background permission via a portal.
+        // The app will continue running as long as we hold a reference.
+        // Simply acquire a hold guard when background play is enabled.
+        let background_play = self.imp().settings.boolean("background-play");
+        if background_play {
+            debug!("macOS: Enabling background play via app hold");
+            self.imp().background_hold.replace(Some(self.hold()));
+        } else {
+            debug!("macOS: Disabling background play");
+            self.imp().background_hold.replace(None);
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
     fn request_background(&self) {}
 }
