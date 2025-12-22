@@ -14,6 +14,8 @@ use log::debug;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use log::warn;
 
+// macOS Dock icon is handled by the .app bundle's Info.plist and .icns file
+
 use crate::{
     audio::AudioPlayer,
     config::{APPLICATION_ID, VERSION},
@@ -93,9 +95,23 @@ mod imp {
             if let Some(display) = gtk::gdk::Display::default() {
                 let icon_theme = gtk::IconTheme::for_display(&display);
                 icon_theme.add_resource_path("/io/bassi/Amberol/icons");
+
+                // On macOS, also add the search path for hicolor icons installed via Homebrew
+                #[cfg(target_os = "macos")]
+                {
+                    // Try common macOS icon paths
+                    icon_theme.add_search_path("/usr/local/share/icons");
+                    icon_theme.add_search_path("/opt/homebrew/share/icons");
+                    if let Some(data_dir) = glib::user_data_dir().to_str() {
+                        icon_theme.add_search_path(&format!("{}/icons", data_dir));
+                    }
+                }
             }
 
             gtk::Window::set_default_icon_name(APPLICATION_ID);
+
+            // Note: macOS Dock icon is set via the .app bundle's Info.plist and .icns file
+            // The cocoa crate approach was causing conflicts with GTK4
         }
 
         fn activate(&self) {

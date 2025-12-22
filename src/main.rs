@@ -59,21 +59,58 @@ fn main() -> glib::ExitCode {
 
     debug!("Loading resources");
     let resources = match env::var("MESON_DEVENV") {
-        Err(_) => gio::Resource::load(PKGDATADIR.to_owned() + "/amberol.gresource")
-            .expect("Unable to find amberol.gresource"),
-        Ok(_) => match env::current_exe() {
-            Ok(path) => {
-                let mut resource_path = path;
-                resource_path.pop();
-                resource_path.push("amberol.gresource");
-                gio::Resource::load(&resource_path)
-                    .expect("Unable to find amberol.gresource in devenv")
+        Ok(_) => {
+            // Development mode: look next to the executable
+            match env::current_exe() {
+                Ok(path) => {
+                    let mut resource_path = path;
+                    resource_path.pop();
+                    resource_path.push("amberol.gresource");
+                    gio::Resource::load(&resource_path)
+                        .expect("Unable to find amberol.gresource in devenv")
+                }
+                Err(err) => {
+                    error!("Unable to find the current path: {}", err);
+                    return glib::ExitCode::FAILURE;
+                }
             }
-            Err(err) => {
-                error!("Unable to find the current path: {}", err);
-                return glib::ExitCode::FAILURE;
+        }
+        Err(_) => {
+            // Production mode: try multiple locations
+            let resource_paths = [
+                // macOS app bundle: look for ../share/amberol relative to executable
+                env::current_exe()
+                    .ok()
+                    .map(|p| {
+                        let mut path = p;
+                        path.pop(); // Remove executable name
+                        path.pop(); // Remove MacOS
+                        path.push("share");
+                        path.push("amberol");
+                        path.push("amberol.gresource");
+                        path
+                    }),
+                // AMBEROL_PKGDATADIR environment variable (for app bundle launcher)
+                env::var("AMBEROL_PKGDATADIR")
+                    .ok()
+                    .map(|p| std::path::PathBuf::from(p).join("amberol.gresource")),
+                // Standard install location
+                Some(std::path::PathBuf::from(PKGDATADIR).join("amberol.gresource")),
+            ];
+
+            let mut loaded_resource = None;
+            for path_opt in resource_paths.iter() {
+                if let Some(path) = path_opt {
+                    debug!("Trying to load gresource from: {:?}", path);
+                    if let Ok(res) = gio::Resource::load(path) {
+                        loaded_resource = Some(res);
+                        break;
+                    }
+                }
             }
-        },
+
+            loaded_resource.expect("Unable to find amberol.gresource in any expected location")
+        }
     };
     gio::resources_register(&resources);
 

@@ -1,0 +1,29 @@
+#!/bin/bash
+# Amberol launcher script for macOS
+
+# Get the directory where this script is located
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+CONTENTS="$DIR/.."
+RESOURCES="$CONTENTS/Resources"
+
+# Set up environment for GTK and GStreamer (Homebrew paths)
+if [ -d "/opt/homebrew" ]; then
+    # Apple Silicon Mac
+    BREW_PREFIX="/opt/homebrew"
+else
+    # Intel Mac
+    BREW_PREFIX="/usr/local"
+fi
+
+export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
+export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
+export GSETTINGS_SCHEMA_DIR="$CONTENTS/share/glib-2.0/schemas:$BREW_PREFIX/share/glib-2.0/schemas"
+export XDG_DATA_DIRS="$CONTENTS/share:$BREW_PREFIX/share:$XDG_DATA_DIRS"
+export GTK_PATH="$BREW_PREFIX/lib/gtk-4.0"
+export GST_PLUGIN_PATH="$BREW_PREFIX/lib/gstreamer-1.0"
+
+# Set the PKGDATADIR to our Resources folder
+export AMBEROL_PKGDATADIR="$CONTENTS/share/amberol"
+
+# Run the actual binary
+exec "$DIR/amberol" "$@"
