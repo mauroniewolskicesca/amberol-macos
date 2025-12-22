@@ -187,30 +187,50 @@ impl VolumeControl {
         ));
         self.imp().volume_scale.add_controller(controller);
 
-        // Click gesture for better macOS compatibility
-        // GTK4 Scales on macOS sometimes don't respond well to trough clicks
-        let click_controller = gtk::GestureClick::builder()
-            .name("volume-click")
-            .button(1) // Primary button
+        // Use a drag gesture for smooth volume adjustment on macOS
+        // GestureDrag handles the full press-drag-release cycle properly
+        let drag_controller = gtk::GestureDrag::builder()
+            .name("volume-drag")
+            .button(1)
             .build();
-        click_controller.connect_pressed(clone!(
+
+        drag_controller.connect_drag_begin(clone!(
             #[strong(rename_to = this)]
             self,
-            move |gesture, _, x, _y| {
+            move |gesture, x, _y| {
                 let scale = &this.imp().volume_scale;
                 let width = scale.width() as f64;
                 if width > 0.0 {
-                    // Calculate the relative position (0.0 to 1.0)
                     let ratio = (x / width).clamp(0.0, 1.0);
                     let adj = scale.adjustment();
                     let new_value = adj.lower() + ratio * (adj.upper() - adj.lower());
-                    debug!("Click at x={}, width={}, ratio={}, new_value={}", x, width, ratio, new_value);
                     adj.set_value(new_value);
                 }
                 gesture.set_state(gtk::EventSequenceState::Claimed);
             }
         ));
-        self.imp().volume_scale.add_controller(click_controller);
+
+        drag_controller.connect_drag_update(clone!(
+            #[strong(rename_to = this)]
+            self,
+            move |gesture, offset_x, _offset_y| {
+                if let Some((start_x, _)) = gesture.start_point() {
+                    let scale = &this.imp().volume_scale;
+                    let width = scale.width() as f64;
+                    if width > 0.0 {
+                        let current_x = start_x + offset_x;
+                        let ratio = (current_x / width).clamp(0.0, 1.0);
+                        let adj = scale.adjustment();
+                        let new_value = adj.lower() + ratio * (adj.upper() - adj.lower());
+                        adj.set_value(new_value);
+                    }
+                }
+            }
+        ));
+
+        // Set propagation phase to capture to get events before the scale's internal handlers
+        drag_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        self.imp().volume_scale.add_controller(drag_controller);
     }
 
     fn toggle_mute(&self, muted: bool) {
