@@ -2,15 +2,11 @@ name: macOS Release Build
 
 on:
   push:
+    branches:
+      - main
+      - develop
     tags:
-      - 'v*'
-    branches:
-      - '**'
-      - '!master'
-      - '!main'
-  create:
-    branches:
-      - '**'
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       version:
