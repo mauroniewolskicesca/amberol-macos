@@ -75,8 +75,6 @@ meson.add_dist_script(
   meson.project_build_root() / 'meson-dist' / '@0@-@1@'.format(meson.project_name(), meson.project_version()),
 )
 
-# Post-install scripts
-# update_desktop_database is not available on macOS
 if host_machine.system() == 'darwin'
   gnome.post_install(
     glib_compile_schemas: true,

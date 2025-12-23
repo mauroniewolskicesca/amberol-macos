@@ -1,0 +1,304 @@
+name: macOS Release Build
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., 2025.2)'
+        required: false
+        default: 'dev'
+
+jobs:
+  build-macos:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew install pkgconf gtk4 libadwaita gstreamer gst-plugins-base \
+            gst-plugins-good gst-plugins-bad meson ninja gettext librsvg
+
+      - name: Install blueprint-compiler dependencies
+        run: |
+          pip3 install --break-system-packages pygobject
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup build directory
+        run: |
+          meson setup builddir --buildtype=release
+
+      - name: Build
+        run: |
+          meson compile -C builddir
+
+      - name: Create app bundle
+        run: |
+          # Create bundle structure
+          mkdir -p Amberol.app/Contents/{MacOS,Resources,share/amberol,share/glib-2.0/schemas,share/icons/hicolor/scalable/apps,share/icons/hicolor/symbolic/apps}
+
+          # Copy binary
+          cp builddir/src/amberol Amberol.app/Contents/MacOS/
+
+          # Copy resources
+          cp builddir/src/amberol.gresource Amberol.app/Contents/share/amberol/
+
+          # Copy and compile schemas
+          cp data/io.bassi.Amberol.gschema.xml Amberol.app/Contents/share/glib-2.0/schemas/
+          glib-compile-schemas Amberol.app/Contents/share/glib-2.0/schemas/
+
+          # Copy icons
+          cp data/icons/hicolor/scalable/apps/*.svg Amberol.app/Contents/share/icons/hicolor/scalable/apps/
+          cp data/icons/hicolor/symbolic/apps/*.svg Amberol.app/Contents/share/icons/hicolor/symbolic/apps/
+
+          # Create icns from SVG
+          BREW_PREFIX=$(brew --prefix)
+          mkdir -p Amberol.iconset
+          rsvg-convert -w 16 -h 16 data/icons/hicolor/scalable/apps/io.bassi.Amberol.svg -o Amberol.iconset/icon_16x16.png
+          rsvg-convert -w 32 -h 32 data/icons/hicolor/scalable/apps/io.bassi.Amberol.svg -o Amberol.iconset/icon_16x16@2x.png
+          rsvg-convert -w 32 -h 32 data/icons/hicolor/scalable/apps/io.bassi.Amberol.svg -o Amberol.iconset/icon_32x32.png
+          rsvg-convert -w 64 -h 64 data/icons/hicolor/scalable/apps/io.bassi.Amberol.svg -o Amberol.iconset/icon_32x32@2x.png
+          rsvg-convert -w 128 -h 128 data/icons/hicolor/scalable/apps/io.bassi.Amberol.svg -o Amberol.iconset/icon_128x128.png
+          rsvg-convert -w 256 -h 256 data/icons/hicolor/scalable/apps/io.bassi.Amberol.svg -o Amberol.iconset/icon_128x128@2x.png
+          rsvg-convert -w 256 -h 256 data/icons/hicolor/scalable/apps/io.bassi.Amberol.svg -o Amberol.iconset/icon_256x256.png
+          rsvg-convert -w 512 -h 512 data/icons/hicolor/scalable/apps/io.bassi.Amberol.svg -o Amberol.iconset/icon_256x256@2x.png
+          rsvg-convert -w 512 -h 512 data/icons/hicolor/scalable/apps/io.bassi.Amberol.svg -o Amberol.iconset/icon_512x512.png
+          rsvg-convert -w 1024 -h 1024 data/icons/hicolor/scalable/apps/io.bassi.Amberol.svg -o Amberol.iconset/icon_512x512@2x.png
+          iconutil -c icns Amberol.iconset -o Amberol.app/Contents/Resources/Amberol.icns
+          rm -rf Amberol.iconset
+
+      - name: Create Info.plist
+        run: |
+          # Determine version name based on trigger type
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            BRANCH_NAME="${{ github.ref_name }}"
+            BRANCH_NAME="${BRANCH_NAME//\//-}"
+            VERSION="dev-${BRANCH_NAME}"
+          fi
+          cat > Amberol.app/Contents/Info.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>en</string>
+              <key>CFBundleExecutable</key>
+              <string>amberol-launcher</string>
+              <key>CFBundleIconFile</key>
+              <string>Amberol.icns</string>
+              <key>CFBundleIdentifier</key>
+              <string>io.bassi.Amberol</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>Amberol</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>VERSION_PLACEHOLDER</string>
+              <key>CFBundleVersion</key>
+              <string>VERSION_PLACEHOLDER</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>11.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>NSHumanReadableCopyright</key>
+              <string>Copyright © 2022-2025 Emmanuele Bassi. GPL-3.0-or-later</string>
+              <key>CFBundleDocumentTypes</key>
+              <array>
+                  <dict>
+                      <key>CFBundleTypeName</key>
+                      <string>Audio File</string>
+                      <key>CFBundleTypeRole</key>
+                      <string>Viewer</string>
+                      <key>LSItemContentTypes</key>
+                      <array>
+                          <string>public.audio</string>
+                          <string>public.mp3</string>
+                          <string>public.mpeg-4-audio</string>
+                          <string>org.xiph.flac</string>
+                          <string>org.xiph.ogg-vorbis</string>
+                      </array>
+                  </dict>
+              </array>
+          </dict>
+          </plist>
+          PLIST
+          sed -i '' "s/VERSION_PLACEHOLDER/${VERSION}/g" Amberol.app/Contents/Info.plist
+
+      - name: Bundle dynamic libraries
+        run: |
+          BREW_PREFIX=$(brew --prefix)
+          mkdir -p Amberol.app/Contents/lib
+          mkdir -p Amberol.app/Contents/lib/gstreamer-1.0
+          mkdir -p Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders
+          mkdir -p Amberol.app/Contents/lib/gtk-4.0/4.0.0/media
+
+          # Function to copy a dylib and its dependencies
+          copy_dylib() {
+            local lib="$1"
+            local dest="$2"
+            if [ -f "$lib" ] && [ ! -f "$dest/$(basename $lib)" ]; then
+              cp -L "$lib" "$dest/" 2>/dev/null || true
+              # Get dependencies and copy them too
+              otool -L "$lib" 2>/dev/null | grep "$BREW_PREFIX" | awk '{print $1}' | while read dep; do
+                if [ -f "$dep" ] && [ ! -f "$dest/$(basename $dep)" ]; then
+                  cp -L "$dep" "$dest/" 2>/dev/null || true
+                fi
+              done
+            fi
+          }
+
+          # Copy main binary dependencies
+          otool -L Amberol.app/Contents/MacOS/amberol | grep "$BREW_PREFIX" | awk '{print $1}' | while read lib; do
+            copy_dylib "$lib" "Amberol.app/Contents/lib"
+          done
+
+          # Keep copying until all dependencies are resolved (up to 10 iterations)
+          for i in {1..10}; do
+            CHANGED=0
+            for lib in Amberol.app/Contents/lib/*.dylib; do
+              if [ -f "$lib" ]; then
+                otool -L "$lib" 2>/dev/null | grep "$BREW_PREFIX" | awk '{print $1}' | while read dep; do
+                  if [ -f "$dep" ] && [ ! -f "Amberol.app/Contents/lib/$(basename $dep)" ]; then
+                    cp -L "$dep" "Amberol.app/Contents/lib/" 2>/dev/null && CHANGED=1 || true
+                  fi
+                done
+              fi
+            done
+            [ $CHANGED -eq 0 ] && break
+          done
+
+          # Copy GStreamer plugins
+          cp -L "$BREW_PREFIX"/lib/gstreamer-1.0/*.dylib Amberol.app/Contents/lib/gstreamer-1.0/ 2>/dev/null || true
+
+          # Copy GDK-Pixbuf loaders
+          cp -L "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders/ 2>/dev/null || true
+
+          # Copy GTK media backends
+          cp -L "$BREW_PREFIX"/lib/gtk-4.0/4.0.0/media/*.dylib Amberol.app/Contents/lib/gtk-4.0/4.0.0/media/ 2>/dev/null || true
+
+          # Update library paths in the binary
+          for lib in Amberol.app/Contents/lib/*.dylib; do
+            if [ -f "$lib" ]; then
+              LIBNAME=$(basename "$lib")
+              # Update the binary to use @executable_path/../lib/
+              install_name_tool -change "$BREW_PREFIX/lib/$LIBNAME" "@executable_path/../lib/$LIBNAME" Amberol.app/Contents/MacOS/amberol 2>/dev/null || true
+              install_name_tool -change "$BREW_PREFIX/opt/*/lib/$LIBNAME" "@executable_path/../lib/$LIBNAME" Amberol.app/Contents/MacOS/amberol 2>/dev/null || true
+            fi
+          done
+
+          # Update library paths in the bundled dylibs
+          for lib in Amberol.app/Contents/lib/*.dylib; do
+            if [ -f "$lib" ]; then
+              # Change the library's own ID
+              LIBNAME=$(basename "$lib")
+              install_name_tool -id "@executable_path/../lib/$LIBNAME" "$lib" 2>/dev/null || true
+
+              # Update references to other bundled libraries
+              for dep in Amberol.app/Contents/lib/*.dylib; do
+                DEPNAME=$(basename "$dep")
+                install_name_tool -change "$BREW_PREFIX/lib/$DEPNAME" "@executable_path/../lib/$DEPNAME" "$lib" 2>/dev/null || true
+                install_name_tool -change "$BREW_PREFIX/opt/*/lib/$DEPNAME" "@executable_path/../lib/$DEPNAME" "$lib" 2>/dev/null || true
+              done
+            fi
+          done
+
+          # Update GStreamer plugins
+          for plugin in Amberol.app/Contents/lib/gstreamer-1.0/*.dylib; do
+            if [ -f "$plugin" ]; then
+              PLUGINNAME=$(basename "$plugin")
+              install_name_tool -id "@executable_path/../lib/gstreamer-1.0/$PLUGINNAME" "$plugin" 2>/dev/null || true
+              for dep in Amberol.app/Contents/lib/*.dylib; do
+                DEPNAME=$(basename "$dep")
+                install_name_tool -change "$BREW_PREFIX/lib/$DEPNAME" "@executable_path/../lib/$DEPNAME" "$plugin" 2>/dev/null || true
+                install_name_tool -change "$BREW_PREFIX/opt/*/lib/$DEPNAME" "@executable_path/../lib/$DEPNAME" "$plugin" 2>/dev/null || true
+              done
+            fi
+          done
+
+          # Generate loaders.cache for bundled GDK-Pixbuf loaders
+          GDK_PIXBUF_MODULEDIR=Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders \
+            "$BREW_PREFIX/bin/gdk-pixbuf-query-loaders" \
+            Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so \
+            > Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache 2>/dev/null || true
+
+          # Fix paths in loaders.cache to use relative paths
+          sed -i '' "s|$PWD/Amberol.app/Contents|@executable_path/..|g" Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache 2>/dev/null || true
+
+      - name: Re-sign binaries
+        run: |
+          find Amberol.app/Contents/lib -name "*.dylib" -o -name "*.so" | while read lib; do
+            codesign --force --sign - "$lib" 2>/dev/null || true
+          done
+          codesign --force --sign - Amberol.app/Contents/MacOS/amberol
+
+      - name: Create launcher script
+        run: |
+          cat > Amberol.app/Contents/MacOS/amberol-launcher << 'LAUNCHER'
+          #!/bin/bash
+          DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+          CONTENTS="$DIR/.."
+
+          # Use bundled libraries
+          export DYLD_LIBRARY_PATH="$CONTENTS/lib:$DYLD_LIBRARY_PATH"
+          export GST_PLUGIN_PATH="$CONTENTS/lib/gstreamer-1.0"
+          export GSETTINGS_SCHEMA_DIR="$CONTENTS/share/glib-2.0/schemas"
+          export AMBEROL_PKGDATADIR="$CONTENTS/share/amberol"
+          export GTK_PATH="$CONTENTS/lib/gtk-4.0"
+          export GDK_PIXBUF_MODULE_FILE="$CONTENTS/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+          export XDG_DATA_DIRS="$CONTENTS/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+
+          exec "$DIR/amberol" "$@"
+          LAUNCHER
+          chmod +x Amberol.app/Contents/MacOS/amberol-launcher
+
+      - name: Create DMG
+        run: |
+          # Create a temporary directory for DMG contents
+          mkdir -p dmg_contents
+          cp -R Amberol.app dmg_contents/
+
+          # Create a symlink to /Applications
+          ln -s /Applications dmg_contents/Applications
+
+          # Create the DMG
+          hdiutil create -volname "Amberol" -srcfolder dmg_contents -ov -format UDZO "Amberol-macOS-${{ matrix.arch }}.dmg"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Amberol-macOS-${{ matrix.arch }}
+          path: Amberol-macOS-${{ matrix.arch }}.dmg
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: Amberol-macOS-${{ matrix.arch }}.dmg
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
