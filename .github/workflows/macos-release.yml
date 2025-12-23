@@ -20,7 +20,14 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-14
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -144,6 +151,106 @@ jobs:
           PLIST
           sed -i '' "s/VERSION_PLACEHOLDER/${VERSION}/g" Amberol.app/Contents/Info.plist
 
+      - name: Bundle dynamic libraries
+        run: |
+          BREW_PREFIX=$(brew --prefix)
+          mkdir -p Amberol.app/Contents/lib
+          mkdir -p Amberol.app/Contents/lib/gstreamer-1.0
+          mkdir -p Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders
+          mkdir -p Amberol.app/Contents/lib/gtk-4.0/4.0.0/media
+
+          # Function to copy a dylib and its dependencies
+          copy_dylib() {
+            local lib="$1"
+            local dest="$2"
+            if [ -f "$lib" ] && [ ! -f "$dest/$(basename $lib)" ]; then
+              cp -L "$lib" "$dest/" 2>/dev/null || true
+              # Get dependencies and copy them too
+              otool -L "$lib" 2>/dev/null | grep "$BREW_PREFIX" | awk '{print $1}' | while read dep; do
+                if [ -f "$dep" ] && [ ! -f "$dest/$(basename $dep)" ]; then
+                  cp -L "$dep" "$dest/" 2>/dev/null || true
+                fi
+              done
+            fi
+          }
+
+          # Copy main binary dependencies
+          otool -L Amberol.app/Contents/MacOS/amberol | grep "$BREW_PREFIX" | awk '{print $1}' | while read lib; do
+            copy_dylib "$lib" "Amberol.app/Contents/lib"
+          done
+
+          # Keep copying until all dependencies are resolved (up to 10 iterations)
+          for i in {1..10}; do
+            CHANGED=0
+            for lib in Amberol.app/Contents/lib/*.dylib; do
+              if [ -f "$lib" ]; then
+                otool -L "$lib" 2>/dev/null | grep "$BREW_PREFIX" | awk '{print $1}' | while read dep; do
+                  if [ -f "$dep" ] && [ ! -f "Amberol.app/Contents/lib/$(basename $dep)" ]; then
+                    cp -L "$dep" "Amberol.app/Contents/lib/" 2>/dev/null && CHANGED=1 || true
+                  fi
+                done
+              fi
+            done
+            [ $CHANGED -eq 0 ] && break
+          done
+
+          # Copy GStreamer plugins
+          cp -L "$BREW_PREFIX"/lib/gstreamer-1.0/*.dylib Amberol.app/Contents/lib/gstreamer-1.0/ 2>/dev/null || true
+
+          # Copy GDK-Pixbuf loaders
+          cp -L "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders/ 2>/dev/null || true
+
+          # Copy GTK media backends
+          cp -L "$BREW_PREFIX"/lib/gtk-4.0/4.0.0/media/*.dylib Amberol.app/Contents/lib/gtk-4.0/4.0.0/media/ 2>/dev/null || true
+
+          # Update library paths in the binary
+          for lib in Amberol.app/Contents/lib/*.dylib; do
+            if [ -f "$lib" ]; then
+              LIBNAME=$(basename "$lib")
+              # Update the binary to use @executable_path/../lib/
+              install_name_tool -change "$BREW_PREFIX/lib/$LIBNAME" "@executable_path/../lib/$LIBNAME" Amberol.app/Contents/MacOS/amberol 2>/dev/null || true
+              install_name_tool -change "$BREW_PREFIX/opt/*/lib/$LIBNAME" "@executable_path/../lib/$LIBNAME" Amberol.app/Contents/MacOS/amberol 2>/dev/null || true
+            fi
+          done
+
+          # Update library paths in the bundled dylibs
+          for lib in Amberol.app/Contents/lib/*.dylib; do
+            if [ -f "$lib" ]; then
+              # Change the library's own ID
+              LIBNAME=$(basename "$lib")
+              install_name_tool -id "@executable_path/../lib/$LIBNAME" "$lib" 2>/dev/null || true
+
+              # Update references to other bundled libraries
+              for dep in Amberol.app/Contents/lib/*.dylib; do
+                DEPNAME=$(basename "$dep")
+                install_name_tool -change "$BREW_PREFIX/lib/$DEPNAME" "@executable_path/../lib/$DEPNAME" "$lib" 2>/dev/null || true
+                install_name_tool -change "$BREW_PREFIX/opt/*/lib/$DEPNAME" "@executable_path/../lib/$DEPNAME" "$lib" 2>/dev/null || true
+              done
+            fi
+          done
+
+          # Update GStreamer plugins
+          for plugin in Amberol.app/Contents/lib/gstreamer-1.0/*.dylib; do
+            if [ -f "$plugin" ]; then
+              PLUGINNAME=$(basename "$plugin")
+              install_name_tool -id "@executable_path/../lib/gstreamer-1.0/$PLUGINNAME" "$plugin" 2>/dev/null || true
+              for dep in Amberol.app/Contents/lib/*.dylib; do
+                DEPNAME=$(basename "$dep")
+                install_name_tool -change "$BREW_PREFIX/lib/$DEPNAME" "@executable_path/../lib/$DEPNAME" "$plugin" 2>/dev/null || true
+                install_name_tool -change "$BREW_PREFIX/opt/*/lib/$DEPNAME" "@executable_path/../lib/$DEPNAME" "$plugin" 2>/dev/null || true
+              done
+            fi
+          done
+
+          # Generate loaders.cache for bundled GDK-Pixbuf loaders
+          GDK_PIXBUF_MODULEDIR=Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders \
+            "$BREW_PREFIX/bin/gdk-pixbuf-query-loaders" \
+            Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so \
+            > Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache 2>/dev/null || true
+
+          # Fix paths in loaders.cache to use relative paths
+          sed -i '' "s|$PWD/Amberol.app/Contents|@executable_path/..|g" Amberol.app/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache 2>/dev/null || true
+
       - name: Create launcher script
         run: |
           cat > Amberol.app/Contents/MacOS/amberol-launcher << 'LAUNCHER'
@@ -151,21 +258,14 @@ jobs:
           DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
           CONTENTS="$DIR/.."
 
-          # Detect Homebrew prefix
-          if [ -d "/opt/homebrew" ]; then
-              BREW_PREFIX="/opt/homebrew"
-          else
-              BREW_PREFIX="/usr/local"
-          fi
-
-          # Set up environment for GTK and GStreamer
-          export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
-          export GST_PLUGIN_PATH="$BREW_PREFIX/lib/gstreamer-1.0"
-          export GSETTINGS_SCHEMA_DIR="$CONTENTS/share/glib-2.0/schemas:$BREW_PREFIX/share/glib-2.0/schemas"
+          # Use bundled libraries
+          export DYLD_LIBRARY_PATH="$CONTENTS/lib:$DYLD_LIBRARY_PATH"
+          export GST_PLUGIN_PATH="$CONTENTS/lib/gstreamer-1.0"
+          export GSETTINGS_SCHEMA_DIR="$CONTENTS/share/glib-2.0/schemas"
           export AMBEROL_PKGDATADIR="$CONTENTS/share/amberol"
-          export GTK_PATH="$BREW_PREFIX/lib/gtk-4.0"
-          export GDK_PIXBUF_MODULE_FILE="$BREW_PREFIX/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
-          export XDG_DATA_DIRS="$CONTENTS/share:$BREW_PREFIX/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+          export GTK_PATH="$CONTENTS/lib/gtk-4.0"
+          export GDK_PIXBUF_MODULE_FILE="$CONTENTS/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+          export XDG_DATA_DIRS="$CONTENTS/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
           exec "$DIR/amberol" "$@"
           LAUNCHER
@@ -173,20 +273,6 @@ jobs:
 
       - name: Create DMG
         run: |
-          # Determine version name based on trigger type
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            # Branch build - use dev-branch-name format
-            BRANCH_NAME="${{ github.ref_name }}"
-            # Sanitize branch name (replace / with -)
-            BRANCH_NAME="${BRANCH_NAME//\//-}"
-            VERSION="dev-${BRANCH_NAME}"
-          fi
-
           # Create a temporary directory for DMG contents
           mkdir -p dmg_contents
           cp -R Amberol.app dmg_contents/
@@ -195,19 +281,19 @@ jobs:
           ln -s /Applications dmg_contents/Applications
 
           # Create the DMG
-          hdiutil create -volname "Amberol" -srcfolder dmg_contents -ov -format UDZO "Amberol-${VERSION}-macOS.dmg"
+          hdiutil create -volname "Amberol" -srcfolder dmg_contents -ov -format UDZO "Amberol-macOS-${{ matrix.arch }}.dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Amberol-macOS
-          path: Amberol-*.dmg
+          name: Amberol-macOS-${{ matrix.arch }}
+          path: Amberol-macOS-${{ matrix.arch }}.dmg
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: Amberol-*.dmg
+          files: Amberol-macOS-${{ matrix.arch }}.dmg
           draft: false
           prerelease: false
           generate_release_notes: true
