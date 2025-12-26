@@ -82,6 +82,25 @@ mod imp {
             obj.set_accels_for_action("win.next", &["<primary>n"]);
             obj.set_accels_for_action("win.play", &["<primary>p"]);
             obj.set_accels_for_action("win.copy", &["<primary>c"]);
+
+            // Playlist shortcuts (macOS: Ctrl is the Control key, not Cmd):
+            // Ctrl+Alt+1-9: Save entire queue to playlist slot
+            // Alt+1-9: Add current song to playlist slot
+            // Ctrl+1-9: Load playlist from slot
+            for i in 1..=9 {
+                obj.set_accels_for_action(
+                    &format!("win.save-playlist(uint32 {})", i),
+                    &[&format!("<Ctrl><Alt>{}", i)],
+                );
+                obj.set_accels_for_action(
+                    &format!("win.add-song-to-playlist(uint32 {})", i),
+                    &[&format!("<Alt>{}", i)],
+                );
+                obj.set_accels_for_action(
+                    &format!("win.load-playlist(uint32 {})", i),
+                    &[&format!("<Ctrl>{}", i)],
+                );
+            }
         }
     }
 

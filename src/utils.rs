@@ -304,3 +304,95 @@ pub fn has_cached_playlist() -> bool {
 
     pls_cache.exists()
 }
+
+pub fn store_numbered_playlist(queue: &Queue, slot: u32) {
+    if slot < 1 || slot > 9 {
+        return;
+    }
+
+    let pls = glib::KeyFile::new();
+    pls.set_string("playlist", "X-GNOME-Title", &format!("Amberol playlist {}", slot));
+    pls.set_int64("playlist", "NumberOfEntries", queue.n_songs() as i64);
+
+    let model = queue.model();
+    for i in 0..model.n_items() {
+        let item = model.item(i).unwrap();
+        let song = item.downcast_ref::<Song>().unwrap();
+        let path = song.file().path().expect("Unknown file");
+        let path_str = path.to_string_lossy();
+        pls.set_value("playlist", &format!("File{i}"), &path_str);
+    }
+
+    let mut pls_cache = glib::user_cache_dir();
+    pls_cache.push("amberol");
+    pls_cache.push("playlists");
+    glib::mkdir_with_parents(&pls_cache, 0o755);
+
+    pls_cache.push(format!("playlist_{}.pls", slot));
+    match pls.save_to_file(&pls_cache) {
+        Ok(_) => debug!("Playlist {} saved to: {:?}", slot, &pls_cache),
+        Err(e) => debug!("Unable to save playlist {}: {}", slot, e),
+    }
+}
+
+pub fn load_numbered_playlist(slot: u32) -> Option<Vec<gio::File>> {
+    if slot < 1 || slot > 9 {
+        return None;
+    }
+
+    let mut pls_cache = glib::user_cache_dir();
+    pls_cache.push("amberol");
+    pls_cache.push("playlists");
+    pls_cache.push(format!("playlist_{}.pls", slot));
+
+    let pls = glib::KeyFile::new();
+    if let Err(e) = pls.load_from_file(&pls_cache, glib::KeyFileFlags::NONE) {
+        debug!("Unable to load playlist {}: {}", slot, e);
+        return None;
+    }
+
+    let n_entries: usize = match pls.int64("playlist", "NumberOfEntries") {
+        Ok(n) => n as usize,
+        Err(_) => 0,
+    };
+
+    let mut res = Vec::with_capacity(n_entries);
+
+    for i in 0..n_entries {
+        match pls.value("playlist", &format!("File{i}")) {
+            Ok(p) => res.push(gio::File::for_path(p)),
+            Err(e) => debug!("Skipping File{i} from playlist {}: {}", slot, e),
+        }
+    }
+
+    Some(res)
+}
+
+pub fn add_song_to_numbered_playlist(song: &Song, slot: u32) {
+    if slot < 1 || slot > 9 {
+        return;
+    }
+
+    let mut pls_cache = glib::user_cache_dir();
+    pls_cache.push("amberol");
+    pls_cache.push("playlists");
+    glib::mkdir_with_parents(&pls_cache, 0o755);
+    pls_cache.push(format!("playlist_{}.pls", slot));
+
+    let pls = glib::KeyFile::new();
+    let _ = pls.load_from_file(&pls_cache, glib::KeyFileFlags::NONE);
+
+    let n_entries: usize = pls.int64("playlist", "NumberOfEntries").unwrap_or(0) as usize;
+
+    pls.set_string("playlist", "X-GNOME-Title", &format!("Amberol playlist {}", slot));
+    pls.set_int64("playlist", "NumberOfEntries", (n_entries + 1) as i64);
+
+    let path = song.file().path().expect("Unknown file");
+    let path_str = path.to_string_lossy();
+    pls.set_value("playlist", &format!("File{}", n_entries), &path_str);
+
+    match pls.save_to_file(&pls_cache) {
+        Ok(_) => debug!("Song added to playlist {}: {:?}", slot, &pls_cache),
+        Err(e) => debug!("Unable to add song to playlist {}: {}", slot, e),
+    }
+}

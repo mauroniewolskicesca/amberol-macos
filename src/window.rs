@@ -9,6 +9,7 @@ use std::{
     time::Instant,
 };
 
+use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::{clone, closure_local};
 use gtk::{gdk, gio, glib, prelude::*, CompositeTemplate};
@@ -224,6 +225,36 @@ mod imp {
                             player.skip_to(pos);
                             player.play();
                         }
+                    }
+                },
+            );
+
+            klass.install_action(
+                "win.save-playlist",
+                Some(glib::VariantTy::UINT32),
+                move |win, _, param| {
+                    if let Some(slot) = param.and_then(u32::from_variant) {
+                        win.save_numbered_playlist(slot);
+                    }
+                },
+            );
+
+            klass.install_action(
+                "win.load-playlist",
+                Some(glib::VariantTy::UINT32),
+                move |win, _, param| {
+                    if let Some(slot) = param.and_then(u32::from_variant) {
+                        win.load_numbered_playlist(slot);
+                    }
+                },
+            );
+
+            klass.install_action(
+                "win.add-song-to-playlist",
+                Some(glib::VariantTy::UINT32),
+                move |win, _, param| {
+                    if let Some(slot) = param.and_then(u32::from_variant) {
+                        win.add_current_song_to_playlist(slot);
                     }
                 },
             );
@@ -1510,6 +1541,14 @@ impl Window {
         self.imp().toast_overlay.add_toast(toast);
     }
 
+    fn clear_and_add_toast(&self, msg: String) {
+        // Dismiss all existing toasts before showing new one
+        let overlay: &adw::ToastOverlay = self.imp().toast_overlay.as_ref();
+        overlay.dismiss_all();
+        let toast = adw::Toast::new(&msg);
+        self.imp().toast_overlay.add_toast(toast);
+    }
+
     pub fn add_skip_to_toast(&self, msg: String, button: String, pos: u32) {
         let toast = adw::Toast::new(&msg);
         toast.set_button_label(Some(&button));
@@ -1627,5 +1666,47 @@ impl Window {
 
     pub fn set_song_position(&self, position: f64) {
         self.imp().waveform_view.set_position(position);
+    }
+
+    fn save_numbered_playlist(&self, slot: u32) {
+        if let Some(player) = self.player() {
+            let queue = player.queue();
+            if queue.is_empty() {
+                self.clear_and_add_toast(i18n("No songs to save"));
+                return;
+            }
+            utils::store_numbered_playlist(&queue, slot);
+            self.clear_and_add_toast(i18n_k("Playlist saved to slot {slot}", &[("slot", &slot.to_string())]));
+        }
+    }
+
+    fn load_numbered_playlist(&self, slot: u32) {
+        if let Some(songs) = utils::load_numbered_playlist(slot) {
+            if songs.is_empty() {
+                self.clear_and_add_toast(i18n_k("No playlist in slot {slot}", &[("slot", &slot.to_string())]));
+                return;
+            }
+            // Save playlist visibility state before loading
+            let was_visible = self.playlist_visible();
+            self.clear_queue();
+            self.queue_songs(songs);
+            // Restore playlist visibility state
+            self.set_playlist_visible(was_visible);
+            self.clear_and_add_toast(i18n_k("Loaded playlist from slot {slot}", &[("slot", &slot.to_string())]));
+        } else {
+            self.clear_and_add_toast(i18n_k("No playlist in slot {slot}", &[("slot", &slot.to_string())]));
+        }
+    }
+
+    fn add_current_song_to_playlist(&self, slot: u32) {
+        if let Some(player) = self.player() {
+            let state = player.state();
+            if let Some(song) = state.current_song() {
+                utils::add_song_to_numbered_playlist(&song, slot);
+                self.clear_and_add_toast(i18n_k("Song added to playlist {slot}", &[("slot", &slot.to_string())]));
+            } else {
+                self.clear_and_add_toast(i18n("No song playing"));
+            }
+        }
     }
 }
