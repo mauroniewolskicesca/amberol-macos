@@ -1021,6 +1021,12 @@ impl Window {
             window.unbind_state();
             window.unbind_waveform();
 
+            // On macOS, quit the app when the window is closed
+            #[cfg(target_os = "macos")]
+            if let Some(app) = window.application() {
+                app.quit();
+            }
+
             glib::Propagation::Proceed
         });
 
